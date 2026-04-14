@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MD Education — Breast Cancer Check-In</title>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Domine:wght@700;800&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Open Sans', sans-serif; background: #F4F7F9; min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const ADMIN_PASSWORD = "admin1234";
+    const STORAGE_KEY = "meeting_checkin_records";
+    const LOCATION_KEY = "meeting_location";
+    const DEFAULT_LOC = { lat: 53.528985, lng: -2.661223, label: "1 Smithy Court, Wigan WN3 6PS" };
+
+    const B = {
+      lightBlue: "#0084B6", darkBlue: "#053857", midBlue: "#005890",
+      red: "#D81D44", white: "#FFFFFF", lightGrey: "#F4F7F9",
+      muted: "#4a6276", border: "#d6e4ed",
+    };
+
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371000, toRad = d => d * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    const getRecords = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; } };
+    const saveRecords = r => localStorage.setItem(STORAGE_KEY, JSON.stringify(r));
+    const getMeetingLocation = () => { try { return JSON.parse(localStorage.getItem(LOCATION_KEY) || "null"); } catch { return null; } };
+    const saveMeetingLocation = l => localStorage.setItem(LOCATION_KEY, JSON.stringify(l));
+
+    const getLocation = () => new Promise((res, rej) => {
+      if (!navigator.geolocation) return rej("Geolocation not supported.");
+      navigator.geolocation.getCurrentPosition(
+        p => res({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        () => rej("Location access denied. Please allow location access and try again.")
+      );
+    });
+
+    function MDLogo() {
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ background: B.red, borderRadius: 6, padding: "5px 10px" }}>
+            <span style={{ color: B.white, fontFamily: "Arial Black, sans-serif", fontWeight: 900, fontSize: 18, lineHeight: 1 }}>MD</span>
+          </div>
+          <span style={{ color: B.darkBlue, fontFamily: "Open Sans, sans-serif", fontWeight: 700, fontSize: 20 }}>Education</span>
+        </div>
+      );
+    }
+
+    function App() {
+      const [view, setView] = React.useState("checkin");
+      const [name, setName] = React.useState("");
+      const [email, setEmail] = React.useState("");
+      const [status, setStatus] = React.useState(null);
+      const [loading, setLoading] = React.useState(false);
+      const [records, setRecords] = React.useState(getRecords());
+      const [meetingLoc, setMeetingLoc] = React.useState(getMeetingLocation());
+      const [adminPass, setAdminPass] = React.useState("");
+      const [adminAuthed, setAdminAuthed] = React.useState(false);
+      const [adminError, setAdminError] = React.useState("");
+      const [locInput, setLocInput] = React.useState({ lat: DEFAULT_LOC.lat, lng: DEFAULT_LOC.lng, label: DEFAULT_LOC.label });
+      const [locSaved, setLocSaved] = React.useState(false);
+      const [checkedIn, setCheckedIn] = React.useState(null);
+      const [activeTab, setActiveTab] = React.useState("attendees");
+
+      React.useEffect(() => {
+        const saved = getMeetingLocation();
+        if (saved) { setMeetingLoc(saved); setLocInput({ lat: saved.lat, lng: saved.lng, label: saved.label }); }
+        else { saveMeetingLocation(DEFAULT_LOC); setMeetingLoc(DEFAULT_LOC); }
+      }, []);
+
+      const refreshRecords = () => setRecords(getRecords());
+
+      const handleCheckIn = async () => {
+        if (!name.trim() || !email.trim()) return setStatus({ type: "error", msg: "Please enter your full name and email address." });
+        if (!meetingLoc) return setStatus({ type: "error", msg: "Meeting location not set. Please contact the organiser." });
+        setLoading(true); setStatus(null);
+        try {
+          const pos = await getLocation();
+          const dist = haversineDistance(pos.lat, pos.lng, meetingLoc.lat, meetingLoc.lng);
+          if (dist > 50) return setStatus({ type: "error", msg: `You are ${Math.round(dist)}m from the meeting location. You must be within 50m to check in.` });
+          const existing = getRecords().find(r => r.email.toLowerCase() === email.toLowerCase() && !r.checkOut);
+          if (existing) { setCheckedIn(existing.id); return setStatus({ type: "info", msg: "You are already checked in. Use the check-out button when you leave." }); }
+          const rec = { id: Date.now(), name: name.trim(), email: email.trim(), checkIn: new Date().toISOString(), checkInLat: pos.lat, checkInLng: pos.lng, checkOut: null };
+          saveRecords([...getRecords(), rec]); refreshRecords(); setCheckedIn(rec.id);
+          setStatus({ type: "success", msg: `Welcome, ${name.trim()}! You have been successfully checked in.` });
+        } catch(e) { setStatus({ type: "error", msg: typeof e === "string" ? e : "Something went wrong." }); }
+        finally { setLoading(false); }
+      };
+
+      const handleCheckOut = async () => {
+        setLoading(true); setStatus(null);
+        try {
+          const pos = await getLocation();
+          const dist = haversineDistance(pos.lat, pos.lng, meetingLoc.lat, meetingLoc.lng);
+          if (dist > 50) return setStatus({ type: "error", msg: `You are ${Math.round(dist)}m from the meeting location. You must be within 50m to check out.` });
+          const recs = getRecords();
+          const idx = recs.findIndex(r => r.id === checkedIn);
+          if (idx === -1) return setStatus({ type: "error", msg: "Check-in record not found." });
+          recs[idx].checkOut = new Date().toISOString();
+          recs[idx].checkOutLat = pos.lat; recs[idx].checkOutLng = pos.lng;
+          saveRecords(recs); refreshRecords();
+          setStatus({ type: "success", msg: `Thank you, ${recs[idx].name}. You have been checked out successfully.` });
+          setCheckedIn(null); setName(""); setEmail("");
+        } catch(e) { setStatus({ type: "error", msg: typeof e === "string" ? e : "Something went wrong." }); }
+        finally { setLoading(false); }
+      };
+
+      const handleAdminLogin = () => {
+        if (adminPass === ADMIN_PASSWORD) { setAdminAuthed(true); setAdminError(""); }
+        else setAdminError("Incorrect password. Please try again.");
+      };
+
+      const handleSaveLocation = () => {
+        const lat = parseFloat(locInput.lat), lng = parseFloat(locInput.lng);
+        if (isNaN(lat) || isNaN(lng)) return;
+        const loc = { lat, lng, label: locInput.label || "Meeting Location" };
+        saveMeetingLocation(loc); setMeetingLoc(loc); setLocSaved(true);
+        setTimeout(() => setLocSaved(false), 2000);
+      };
+
+      const fmt = iso => iso ? new Date(iso).toLocaleString() : "—";
+      const statusCfg = {
+        success: { bg: "#e8f5e9", color: "#1b5e20", border: "#a5d6a7" },
+        error:   { bg: "#fdecea", color: "#7f0000", border: "#ef9a9a" },
+        info:    { bg: "#e3f2fd", color: "#0d47a1", border: "#90caf9" },
+      };
+
+      const inputStyle = { display: "block", width: "100%", padding: "11px 14px", borderRadius: 7, border: "1.5px solid #d6e4ed", fontSize: 14, marginBottom: 14, outline: "none", color: "#053857", background: "#fff", fontFamily: "Open Sans, sans-serif", boxSizing: "border-box" };
+      const labelStyle = { display: "block", fontSize: 11, fontWeight: 700, color: "#005890", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 };
+      const btnStyle = { width: "100%", padding: 13, borderRadius: 7, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", marginTop: 4, marginBottom: 8, fontFamily: "Open Sans, sans-serif" };
+      const cardStyle = { background: "#fff", borderRadius: 12, padding: 28, boxShadow: "0 4px 20px rgba(5,56,87,0.08)", marginBottom: 20 };
+      const tdStyle = { padding: "10px 12px", borderBottom: "1px solid #F4F7F9", color: "#4a6276", fontFamily: "Open Sans, sans-serif" };
+
+      return (
+        <div style={{ fontFamily: "Open Sans, sans-serif", minHeight: "100vh", background: B.lightGrey }}>
+
+          {/* Nav */}
+          <div style={{ background: B.white, borderBottom: `4px solid ${B.red}`, padding: "14px 28px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <MDLogo />
+            <button onClick={() => { setView(view === "admin" ? "checkin" : "admin"); setStatus(null); }}
+              style={{ background: "transparent", color: B.darkBlue, border: `1.5px solid ${B.border}`, borderRadius: 6, padding: "8px 18px", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Open Sans, sans-serif" }}>
+              {view === "admin" ? "← Check-In" : "Admin Panel"}
+            </button>
+          </div>
+
+          {/* Hero Check-In */}
+          {view === "checkin" && (
+            <div style={{ background: B.white, padding: "28px 24px", textAlign: "center", borderBottom: `1px solid ${B.border}` }}>
+              <div style={{ display: "inline-block", background: B.red, color: B.white, borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 700, marginBottom: 12 }}>2nd Annual</div>
+              <h1 style={{ color: B.darkBlue, margin: "0 0 4px", fontSize: 30, fontFamily: "Domine, serif", fontWeight: 800 }}>
+                {checkedIn ? "You're Checked In ✓" : "Breast Cancer"}
+              </h1>
+              <p style={{ color: B.lightBlue, margin: "0 0 16px", fontSize: 15, fontWeight: 600 }}>US Focus Meeting 2026</p>
+              <div style={{ display: "inline-block", textAlign: "left", background: B.lightGrey, borderRadius: 10, padding: "14px 20px", fontSize: 13, color: B.muted }}>
+                <div style={{ marginBottom: 6 }}>📅 <strong>April 24 – 25, 2026</strong></div>
+                <div style={{ marginBottom: 6 }}>📍 Sheraton Grand Nashville Downtown, 623 Union St, Nashville, TN 37219</div>
+                <div>👥 <strong>Co-Chairs:</strong> Komal Jhaveri, MD; Virginia Kaklamani, MD</div>
+              </div>
+            </div>
+          )}
+
+          {/* Hero Admin */}
+          {view === "admin" && adminAuthed && (
+            <div style={{ background: B.white, padding: "18px 24px", textAlign: "center", borderBottom: `1px solid ${B.border}` }}>
+              <h1 style={{ color: B.darkBlue, margin: 0, fontSize: 20, fontFamily: "Domine, serif", fontWeight: 800 }}>2nd Annual Breast Cancer US Focus Meeting 2026 — Admin</h1>
+            </div>
+          )}
+
+          <div style={{ maxWidth: 540, margin: "32px auto", padding: "0 16px 48px" }}>
+
+            {/* CHECK-IN */}
+            {view === "checkin" && (
+              <div style={cardStyle}>
+                {!checkedIn ? (
+                  <>
+                    <p style={{ color: B.muted, fontSize: 14, marginTop: 0, marginBottom: 22, lineHeight: 1.6 }}>
+                      Welcome to the 2nd Annual Breast Cancer US Focus Meeting 2026. Please enter your details — your GPS location will be verified before check-in is confirmed.
+                    </p>
+                    <label style={labelStyle}>Full Name</label>
+                    <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Jane Smith" style={inputStyle} />
+                    <label style={labelStyle}>Email Address</label>
+                    <input value={email} onChange={e => setEmail(e.target.value)} placeholder="e.g. jane@example.com" type="email" style={inputStyle} />
+                    <button onClick={handleCheckIn} disabled={loading} style={{ ...btnStyle, background: loading ? B.muted : B.red }}>
+                      {loading ? "⏳ Verifying location…" : "✓  Check In"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ textAlign: "center", padding: "8px 0 24px" }}>
+                      <div style={{ width: 68, height: 68, borderRadius: "50%", background: "#e8f5e9", border: "3px solid #81c784", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30, margin: "0 auto 14px" }}>✓</div>
+                      <h3 style={{ margin: "0 0 6px", color: B.darkBlue, fontFamily: "Domine, serif" }}>Checked In</h3>
+                      <p style={{ color: B.muted, fontSize: 14, margin: 0 }}>When you're ready to leave, tap the button below.</p>
+                    </div>
+                    <button onClick={handleCheckOut} disabled={loading} style={{ ...btnStyle, background: loading ? B.muted : B.darkBlue }}>
+                      {loading ? "⏳ Verifying location…" : "🚪  Check Out"}
+                    </button>
+                  </>
+                )}
+                {status && (
+                  <div style={{ marginTop: 16, padding: "13px 16px", borderRadius: 8, background: statusCfg[status.type].bg, color: statusCfg[status.type].color, border: `1px solid ${statusCfg[status.type].border}`, fontSize: 14, lineHeight: 1.5 }}>
+                    {status.msg}
+                  </div>
+                )}
+                <div style={{ marginTop: 24, paddingTop: 16, borderTop: `1px solid ${B.border}`, display: "flex", justifyContent: "center", gap: 20 }}>
+                  {[["🔒","GPS Verified"],["📍","50m Geofence"],["💾","Secure Storage"]].map(([icon, label]) => (
+                    <div key={label} style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 16 }}>{icon}</div>
+                      <div style={{ fontSize: 10, color: B.muted, marginTop: 2, fontWeight: 600 }}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ADMIN LOGIN */}
+            {view === "admin" && !adminAuthed && (
+              <div style={cardStyle}>
+                <div style={{ textAlign: "center", marginBottom: 24 }}>
+                  <div style={{ width: 56, height: 56, borderRadius: "50%", background: B.lightGrey, border: `2px solid ${B.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, margin: "0 auto 14px" }}>🔐</div>
+                  <h2 style={{ margin: 0, color: B.darkBlue, fontSize: 22, fontFamily: "Domine, serif", fontWeight: 800 }}>Admin Access</h2>
+                  <p style={{ margin: "6px 0 0", color: B.muted, fontSize: 13 }}>Enter your password to continue</p>
+                </div>
+                <label style={labelStyle}>Password</label>
+                <input value={adminPass} onChange={e => setAdminPass(e.target.value)} type="password" placeholder="Enter admin password"
+                  style={inputStyle} onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
+                <button onClick={handleAdminLogin} style={{ ...btnStyle, background: B.midBlue }}>Login</button>
+                {adminError && <p style={{ color: B.red, fontSize: 13, marginTop: 10, textAlign: "center" }}>{adminError}</p>}
+                <p style={{ fontSize: 11, color: B.muted, marginTop: 14, textAlign: "center" }}>Default password: <code>admin1234</code></p>
+              </div>
+            )}
+
+            {/* ADMIN PANEL */}
+            {view === "admin" && adminAuthed && (
+              <div>
+                <div style={{ display: "flex", gap: 4, marginBottom: 20, background: B.white, borderRadius: 10, padding: 4, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
+                  {[["attendees","👥 Attendees"],["location","📍 Location"]].map(([k, label]) => (
+                    <button key={k} onClick={() => setActiveTab(k)}
+                      style={{ flex: 1, padding: "10px 0", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700,
+                        fontFamily: "Open Sans, sans-serif", background: activeTab === k ? B.darkBlue : "transparent", color: activeTab === k ? B.white : B.muted }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {activeTab === "location" && (
+                  <div style={cardStyle}>
+                    <h3 style={{ margin: "0 0 4px", color: B.darkBlue, fontFamily: "Domine, serif", fontSize: 18, fontWeight: 800 }}>Meeting Location</h3>
+                    <p style={{ margin: "0 0 20px", color: B.muted, fontSize: 13 }}>Attendees must be within 50m of this location to check in or out.</p>
+                    <label style={labelStyle}>Location Name</label>
+                    <input value={locInput.label} onChange={e => setLocInput(p => ({ ...p, label: e.target.value }))} placeholder="e.g. Conference Room A" style={inputStyle} />
+                    <div style={{ display: "flex", gap: 12 }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={labelStyle}>Latitude</label>
+                        <input value={locInput.lat} onChange={e => setLocInput(p => ({ ...p, lat: e.target.value }))} style={inputStyle} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={labelStyle}>Longitude</label>
+                        <input value={locInput.lng} onChange={e => setLocInput(p => ({ ...p, lng: e.target.value }))} style={inputStyle} />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button onClick={handleSaveLocation} style={{ ...btnStyle, background: locSaved ? "#2e7d32" : B.red, flex: 1 }}>
+                        {locSaved ? "✓ Saved!" : "Save Location"}
+                      </button>
+                      <button onClick={async () => {
+                        try { const pos = await getLocation(); setLocInput(p => ({ ...p, lat: pos.lat.toFixed(6), lng: pos.lng.toFixed(6) })); }
+                        catch(e) { alert(typeof e === "string" ? e : "Could not get location."); }
+                      }} style={{ ...btnStyle, background: B.lightBlue, flex: 1 }}>📍 Use My Location</button>
+                    </div>
+                    {meetingLoc && <p style={{ fontSize: 12, color: B.muted, marginTop: 10, textAlign: "center" }}>
+                      Current: <strong>{meetingLoc.label}</strong> · {meetingLoc.lat.toFixed(5)}, {meetingLoc.lng.toFixed(5)}
+                    </p>}
+                  </div>
+                )}
+
+                {activeTab === "attendees" && (
+                  <div style={cardStyle}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <div>
+                        <h3 style={{ margin: 0, color: B.darkBlue, fontFamily: "Domine, serif", fontSize: 18, fontWeight: 800 }}>Attendee Records</h3>
+                        <p style={{ margin: "3px 0 0", color: B.muted, fontSize: 12 }}>
+                          {records.length} total · <span style={{ color: "#2e7d32", fontWeight: 700 }}>{records.filter(r => !r.checkOut).length} present</span>
+                        </p>
+                      </div>
+                      <button onClick={refreshRecords} style={{ background: B.lightGrey, border: `1px solid ${B.border}`, borderRadius: 6, padding: "7px 14px", fontSize: 12, cursor: "pointer", color: B.darkBlue, fontWeight: 700, fontFamily: "Open Sans, sans-serif" }}>↻ Refresh</button>
+                    </div>
+                    {records.length === 0 ? (
+                      <div style={{ textAlign: "center", padding: "36px 0", color: B.muted, fontSize: 14 }}>
+                        <div style={{ fontSize: 40, marginBottom: 10 }}>📋</div>
+                        No check-ins recorded yet.
+                      </div>
+                    ) : (
+                      <div style={{ overflowX: "auto", borderRadius: 8, border: `1px solid ${B.border}` }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "Open Sans, sans-serif" }}>
+                          <thead>
+                            <tr style={{ background: B.darkBlue }}>
+                              {["Name","Email","Check In","Check Out","Status"].map(h => (
+                                <th key={h} style={{ padding: "11px 12px", textAlign: "left", color: B.white, fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8 }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {records.map((r, i) => (
+                              <tr key={r.id} style={{ background: i % 2 === 0 ? B.white : B.lightGrey }}>
+                                <td style={tdStyle}><strong style={{ color: B.darkBlue }}>{r.name}</strong></td>
+                                <td style={{ ...tdStyle, color: B.muted }}>{r.email}</td>
+                                <td style={tdStyle}>{fmt(r.checkIn)}</td>
+                                <td style={tdStyle}>{r.checkOut ? fmt(r.checkOut) : "—"}</td>
+                                <td style={tdStyle}>
+                                  <span style={{ padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
+                                    background: r.checkOut ? "#f1f5f9" : "#e8f5e9", color: r.checkOut ? B.muted : "#1b5e20" }}>
+                                    {r.checkOut ? "Left" : "● Present"}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <button onClick={() => { if (window.confirm("Clear all records? This cannot be undone.")) { saveRecords([]); refreshRecords(); } }}
+                      style={{ ...btnStyle, background: B.white, color: B.red, border: `1.5px solid ${B.red}`, marginTop: 18, fontSize: 13 }}>
+                      🗑  Clear All Records
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div style={{ background: B.white, padding: "20px 24px", textAlign: "center", borderTop: "4px solid #c2185b" }}>
+            <MDLogo />
+            <p style={{ color: B.muted, fontSize: 11, marginTop: 10 }}>© MD Education · Secure Meeting Attendance System</p>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
