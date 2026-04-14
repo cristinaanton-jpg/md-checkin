@@ -237,7 +237,6 @@
                   style={inputStyle} onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
                 <button onClick={handleAdminLogin} style={{ ...btnStyle, background: B.midBlue }}>Login</button>
                 {adminError && <p style={{ color: B.red, fontSize: 13, marginTop: 10, textAlign: "center" }}>{adminError}</p>}
-                <p style={{ fontSize: 11, color: B.muted, marginTop: 14, textAlign: "center" }}>Default password: <code>admin1234</code></p>
               </div>
             )}
 
