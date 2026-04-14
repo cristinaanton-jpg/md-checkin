@@ -16,7 +16,7 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const ADMIN_PASSWORD = "MDEducation2022";
+    const ADMIN_PASSWORD = "MDEducation2026";
     const STORAGE_KEY = "meeting_checkin_records";
     const LOCATION_KEY = "meeting_location";
     const DEFAULT_LOC = { lat: 53.528985, lng: -2.661223, label: "1 Smithy Court, Wigan WN3 6PS" };
